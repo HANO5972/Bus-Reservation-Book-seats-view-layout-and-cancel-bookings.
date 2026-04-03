@@ -3,7 +3,7 @@ from tkinter import messagebox, simpledialog
 import json
 import os
 
-DATA_FILE = "bookings.json"
+DATA_FILE   = "bookings.json"
 TOTAL_SEATS = 30
 
 # ---------- Colors ----------
@@ -21,7 +21,11 @@ SEAT_BOOKED    = "#e94560"
 def load_bookings():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r") as f:
-            return json.load(f)
+            data = json.load(f)
+        for key, val in data.items():
+            if isinstance(val, str):
+                data[key] = {"name": val, "pin": "0000"}
+        return data
     return {}
 
 
@@ -40,12 +44,12 @@ class BusReservationApp:
         self.root.geometry("700x620")
         self.root.resizable(False, False)
 
-        self.bookings = load_bookings()   # single source of truth
+        self.bookings     = load_bookings()
         self.seat_buttons = {}
-        self.status_var = tk.StringVar(value="Click a seat to book or cancel.")
+        self.status_var   = tk.StringVar(value="Click a seat to book or cancel.")
 
         self.build_ui()
-        self.refresh_seats()              # called AFTER all widgets exist
+        self.refresh_seats()
 
     def build_ui(self):
         # --- Header ---
@@ -70,13 +74,13 @@ class BusReservationApp:
         grid_frame.pack(padx=20, pady=(0, 8), fill="x")
 
         tk.Label(grid_frame, text="SELECT A SEAT", font=("Helvetica", 11, "bold"),
-                 bg=PANEL, fg=MUTED).grid(row=0, column=0, columnspan=9,
+                 bg=PANEL, fg=MUTED).grid(row=0, column=0, columnspan=6,
                                            pady=(0, 6), sticky="w")
-        tk.Label(grid_frame, text="🚗 DRIVER", font=("Helvetica", 8),
-                 bg=PANEL, fg=MUTED).grid(row=1, column=0, columnspan=2,
-                                           sticky="w", padx=4)
+        tk.Label(grid_frame, text="DRIVER 🚗", font=("Helvetica", 8),
+                 bg=PANEL, fg=MUTED).grid(row=1, column=3, columnspan=2,
+                                           sticky="e", padx=4)
 
-        # 4 seats per row, aisle gap between column index 1 and 2 (col 2 = spacer)
+        # 4 seats per row, aisle gap at column 2
         for i in range(1, TOTAL_SEATS + 1):
             grid_row = ((i - 1) // 4) + 2
             pos      = (i - 1) % 4
@@ -118,47 +122,62 @@ class BusReservationApp:
                       activebackground=ACCENT, activeforeground="white"
                       ).pack(side="left", padx=8)
 
-    # ---- update seat colors from self.bookings (no file re-read) ----
     def refresh_seats(self):
         for i in range(1, TOTAL_SEATS + 1):
-            if str(i) in self.bookings:
-                self.seat_buttons[i].config(bg=SEAT_BOOKED)
-            else:
-                self.seat_buttons[i].config(bg=SEAT_AVAILABLE)
+            self.seat_buttons[i].config(
+                bg=SEAT_BOOKED if str(i) in self.bookings else SEAT_AVAILABLE)
         booked = len(self.bookings)
         self.status_var.set(
             f"  {booked} seat(s) booked  |  {TOTAL_SEATS - booked} seat(s) available")
 
-    # ---- seat click: book or cancel ----
     def on_seat_click(self, seat_num):
         seat = str(seat_num)
 
         if seat in self.bookings:
-            name = self.bookings[seat]
-            if messagebox.askyesno("Cancel Booking",
-                                   f"Seat {seat_num} is booked by {name}.\n\nCancel this booking?"):
-                del self.bookings[seat]
-                save_bookings(self.bookings)
-                self.refresh_seats()
-                messagebox.showinfo("Cancelled",
-                                    f"Booking for seat {seat_num} ({name}) cancelled.")
-        else:
-            name = simpledialog.askstring(
-                "Book Seat", f"Enter passenger name for Seat {seat_num}:",
-                parent=self.root)
+            # --- Cancel: verify PIN ---
+            name = self.bookings[seat]["name"]
+            if not messagebox.askyesno("Cancel Booking",
+                                       f"Seat {seat_num} is booked by {name}.\n\nCancel? (PIN required)"):
+                return
+            pin = simpledialog.askstring(
+                "Enter PIN", f"4-digit PIN for Seat {seat_num}:",
+                parent=self.root, show="*")
+            if pin is None:
+                return
+            if pin != self.bookings[seat]["pin"]:
+                messagebox.showerror("Wrong PIN", "Incorrect PIN. Cancellation denied.")
+                return
+            del self.bookings[seat]
+            save_bookings(self.bookings)
+            self.refresh_seats()
+            messagebox.showinfo("Cancelled", f"Seat {seat_num} ({name}) booking cancelled.")
 
-            if name is None:          # user pressed Cancel
+        else:
+            # --- Book: ask name + PIN ---
+            name = simpledialog.askstring(
+                "Book Seat", f"Passenger name for Seat {seat_num}:",
+                parent=self.root)
+            if name is None:
                 return
             if not name.strip():
                 messagebox.showwarning("Invalid", "Name cannot be empty.")
                 return
 
-            self.bookings[seat] = name.strip()
+            pin = simpledialog.askstring(
+                "Set PIN", "Set a 4-digit PIN (needed to cancel later):",
+                parent=self.root, show="*")
+            if pin is None:
+                return
+            if not pin.strip().isdigit() or len(pin.strip()) != 4:
+                messagebox.showwarning("Invalid PIN", "PIN must be exactly 4 digits.")
+                return
+
+            self.bookings[seat] = {"name": name.strip(), "pin": pin.strip()}
             save_bookings(self.bookings)
             self.refresh_seats()
-            messagebox.showinfo("Booked!", f"Seat {seat_num} booked for {name.strip()} ✓")
+            messagebox.showinfo("Booked ✓",
+                                f"Seat {seat_num} booked for {name.strip()}!\nKeep your PIN safe 🔒")
 
-    # ---- view all bookings popup ----
     def view_bookings(self):
         if not self.bookings:
             messagebox.showinfo("Bookings", "No bookings yet!")
@@ -178,8 +197,8 @@ class BusReservationApp:
         frame = tk.Frame(win, bg=PANEL, padx=16, pady=12)
         frame.pack(fill="both", expand=True, padx=16, pady=(0, 16))
 
-        canvas = tk.Canvas(frame, bg=PANEL, highlightthickness=0)
-        scrollbar = tk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+        canvas       = tk.Canvas(frame, bg=PANEL, highlightthickness=0)
+        scrollbar    = tk.Scrollbar(frame, orient="vertical", command=canvas.yview)
         scroll_frame = tk.Frame(canvas, bg=PANEL)
 
         scroll_frame.bind("<Configure>",
@@ -189,9 +208,9 @@ class BusReservationApp:
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
-        # sort by integer seat number (fixes "9" sorting after "30" as string)
-        for seat, name in sorted(self.bookings.items(), key=lambda x: int(x[0])):
-            row = tk.Frame(scroll_frame, bg=PANEL)
+        for seat, data in sorted(self.bookings.items(), key=lambda x: int(x[0])):
+            name = data["name"] if isinstance(data, dict) else data
+            row  = tk.Frame(scroll_frame, bg=PANEL)
             row.pack(fill="x", pady=3)
             tk.Label(row, text=f"Seat {int(seat):2}", font=("Courier", 10, "bold"),
                      bg=PANEL, fg=ACCENT, width=8).pack(side="left")
@@ -203,5 +222,5 @@ class BusReservationApp:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = BusReservationApp(root)
+    app  = BusReservationApp(root)
     root.mainloop()
